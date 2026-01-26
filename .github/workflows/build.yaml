@@ -24,6 +24,10 @@ jobs:
       uses: xmake-io/github-action-setup-xmake@v1
       with:
         xmake-version: latest
+
+    - name: Build llaisys target
+      run: | 
+        xmake build llaisys
     
     - name: Xmake Build & Install
       run: | 
