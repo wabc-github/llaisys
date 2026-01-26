@@ -7,7 +7,7 @@ import llaisys
 import torch
 from test_utils import random_tensor, check_equal, benchmark
 
-
+# 为了push一下增加一行注释，不影响功能
 def torch_add(ans, a, b):
     torch.add(a, b, out=ans)
 
