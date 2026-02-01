@@ -38,5 +38,20 @@ __C {
     __export struct LlaisysQwen2Weights *llaisysQwen2ModelWeights(struct LlaisysQwen2Model * model);
 
     __export int64_t llaisysQwen2ModelInfer(struct LlaisysQwen2Model * model, int64_t * token_ids, size_t ntoken);
+
+    __export int64_t llaisysQwen2ModelInferWithSampling(struct LlaisysQwen2Model * model, int64_t * token_ids, size_t ntoken, int top_k, float top_p, float temperature);
+
+    // 权重加载接口（从内存加载单张量到权重结构体）
+    __export void llaisysQwen2WeightsLoadTensor(
+        struct LlaisysQwen2Weights *weights,
+        const char *tensor_name,  // 对应safetensors中的张量名（如"model.embed_tokens.weight"）
+        llaisysTensor_t tensor    // 已加载数据的张量
+    );
+
+    // 初始化KV-Cache（每轮推理前调用）
+    __export void llaisysQwen2ModelInitKVCache(struct LlaisysQwen2Model *model);
+
+    // 释放KV-Cache（推理结束后调用）
+    __export void llaisysQwen2ModelFreeKVCache(struct LlaisysQwen2Model *model);
 }
 #endif // LLAISYS_MODELS_QWEN2_H
