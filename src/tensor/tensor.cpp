@@ -169,7 +169,7 @@ bool Tensor::isContiguous() const {
     
     // 从最后一维开始校验步长：连续张量的步长满足「当前维步长 = 下一维步长 * 下一维大小」
     ptrdiff_t expected_stride = 1;
-    for (int i = _meta.shape.size() - 1; i >= 0; --i) {
+    for (size_t i = _meta.shape.size() - 1; i >= 0; --i) {
         if (_meta.strides[i] != expected_stride) {
             return false;
         }
@@ -233,7 +233,7 @@ tensor_t Tensor::view(const std::vector<size_t> &shape) const {
     // 计算新的步长
     std::vector<ptrdiff_t> new_strides(shape.size());
     ptrdiff_t stride = 1;
-    for (int i = shape.size() - 1; i >= 0; --i) {
+    for (size_t i = shape.size() - 1; i >= 0; --i) {
         new_strides[i] = stride;
         stride *= shape[i];
     }

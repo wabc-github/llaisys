@@ -2,6 +2,7 @@
 #include "models/qwen2.hpp"
 #include <cstring>
 #include <stdexcept>
+#include <string> 
 
 using namespace llaisys::models;
 
