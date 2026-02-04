@@ -3,11 +3,9 @@ from ..libllaisys import LIB_LLAISYS, DeviceType, LlaisysQwen2Meta, LlaisysQwen2
 import ctypes
 from pathlib import Path
 import safetensors
-import numpy as np
 import random
 import math
-import torch
-from transformers import AutoModelForCausalLM
+
 
 
 class Qwen2:
@@ -33,10 +31,7 @@ class Qwen2:
             raise RuntimeError("Failed to create Qwen2 model")
             
         # 加载权重
-        # self._load_weights()
-        self.device = torch.device("cpu" if device == DeviceType.CPU else ("cuda" if torch.cuda.is_available() else "cpu"))
-        self.model_ptr = AutoModelForCausalLM.from_pretrained(str(model_path), trust_remote_code=True, torch_dtype=torch.bfloat16)
-        self.model_ptr.to(self.device)
+        self._load_weights()
         
     def _load_config(self):
         # 读取config.json或其他配置文件来初始化meta结构
