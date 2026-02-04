@@ -169,7 +169,7 @@ bool Tensor::isContiguous() const {
     
     // 从最后一维开始校验步长：连续张量的步长满足「当前维步长 = 下一维步长 * 下一维大小」
     ptrdiff_t expected_stride = 1;
-    for (size_t i = _meta.shape.size() - 1; i >= 0; --i) {
+    for (int i = _meta.shape.size() - 1; i >= 0; --i) {
         if (_meta.strides[i] != expected_stride) {
             return false;
         }
