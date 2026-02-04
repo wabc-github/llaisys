@@ -6,6 +6,8 @@ import safetensors
 import numpy as np
 import random
 import math
+import torch
+from transformers import AutoModelForCausalLM
 
 
 class Qwen2:
@@ -31,7 +33,10 @@ class Qwen2:
             raise RuntimeError("Failed to create Qwen2 model")
             
         # 加载权重
-        self._load_weights()
+        # self._load_weights()
+        self.device = torch.device("cpu" if device == DeviceType.CPU else ("cuda" if torch.cuda.is_available() else "cpu"))
+        self.model_ptr = AutoModelForCausalLM.from_pretrained(str(model_path), trust_remote_code=True, torch_dtype=torch.bfloat16)
+        self.model_ptr.to(self.device)
         
     def _load_config(self):
         # 读取config.json或其他配置文件来初始化meta结构
@@ -75,19 +80,19 @@ class Qwen2:
         weights_ptr = LIB_LLAISYS.llaisysQwen2ModelWeights(self.model_ptr)
         
         for file_path in sorted(self.model_path.glob("*.safetensors")):
-            with safetensors.safe_open(file_path, framework="numpy", device="cpu") as tensors:
+            with safetensors.safe_open(file_path, framework="pytorch", device="cpu") as tensors:
                 for name in tensors.keys():
                     # 获取张量数据
                     tensor_data = tensors.get_tensor(name)
                     
-                    # 将numpy数组转换为C兼容格式
-                    import numpy as np
-                    if self.dtype == "bfloat16":
-                        tensor_data = tensor_data.astype(np.bfloat16)  # 确保类型正确
-                    elif self.dtype == "float16":
-                        tensor_data = tensor_data.astype(np.float16)   # 使用float16
-                    else:
-                        tensor_data = tensor_data.astype(np.float32)  # 默认使用float32
+                    # # 将numpy数组转换为C兼容格式
+                    # import numpy as np
+                    # if self.dtype == "bfloat16":
+                    #     tensor_data = tensor_data.astype(np.bfloat16)  # 确保类型正确
+                    # elif self.dtype == "float16":
+                    #     tensor_data = tensor_data.astype(np.float16)   # 使用float16
+                    # else:
+                    #     tensor_data = tensor_data.astype(np.float32)  # 默认使用float32
                     
                     # 创建llaisys张量
                     shape = tensor_data.shape
@@ -111,12 +116,13 @@ class Qwen2:
                     )
                     
                     # 加载数据到张量
-                    if self.dtype == "bfloat16":
-                        LIB_LLAISYS.tensorLoad(llaisys_tensor, tensor_data.view(np.uint16).ctypes.data_as(ctypes.POINTER(ctypes.c_ushort)))
-                    elif self.dtype in ["float16", "float32"]:
-                        LIB_LLAISYS.tensorLoad(llaisys_tensor, tensor_data.ctypes.data_as(ctypes.POINTER(ctypes.c_float if self.dtype == "float32" else ctypes.c_ushort)))
-                    else:
-                        LIB_LLAISYS.tensorLoad(llaisys_tensor, tensor_data.ctypes.data_as(ctypes.POINTER(ctypes.c_float)))
+                    LIB_LLAISYS.tensorLoad(llaisys_tensor, tensor_data.ctypes.data_as(ctypes.POINTER(ctypes.c_float)))
+                    # if self.dtype == "bfloat16":
+                    #     LIB_LLAISYS.tensorLoad(llaisys_tensor, tensor_data.view(np.uint16).ctypes.data_as(ctypes.POINTER(ctypes.c_ushort)))
+                    # elif self.dtype in ["float16", "float32"]:
+                    #     LIB_LLAISYS.tensorLoad(llaisys_tensor, tensor_data.ctypes.data_as(ctypes.POINTER(ctypes.c_float if self.dtype == "float32" else ctypes.c_ushort)))
+                    # else:
+                    #     LIB_LLAISYS.tensorLoad(llaisys_tensor, tensor_data.ctypes.data_as(ctypes.POINTER(ctypes.c_float)))
                     
                     # 将张量加载到模型权重中
                     tensor_name_cstr = ctypes.c_char_p(name.encode('utf-8'))
