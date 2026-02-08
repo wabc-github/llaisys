@@ -16,11 +16,12 @@ struct Qwen2KVCache {
 // Qwen2模型核心类
 class Qwen2Model {
 public:
-    Qwen2Model(const LlaisysQwen2Meta* meta, llaisysDeviceType_t device, int* device_ids, int ndevice);
+    Qwen2Model(const LlaisysQwen2Meta &meta,
+          const LlaisysQwen2Weights &weights,
+          llaisysDeviceType_t device,
+          const std::vector<int> &device_ids);
     ~Qwen2Model();
 
-    // 获取权重结构体
-    LlaisysQwen2Weights* weights();
 
     // 初始化/释放KV-Cache
     void init_kv_cache();
@@ -34,12 +35,12 @@ public:
 
 private:
     // 模型元信息
-    LlaisysQwen2Meta _meta;
-    // 设备信息
-    llaisysDeviceType_t _device;
-    std::vector<int> _device_ids;
+    LlaisysQwen2Meta _meta{};
     // 权重
-    LlaisysQwen2Weights _weights;
+    const LlaisysQwen2Weights *_weights{nullptr};
+    // 设备信息
+    llaisysDeviceType_t _device{LLAISYS_DEVICE_CPU};
+    std::vector<int> _device_ids;
     // KV-Cache（nlayer层）
     std::vector<Qwen2KVCache> _kv_caches;
 

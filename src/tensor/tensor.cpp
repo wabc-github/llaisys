@@ -7,10 +7,8 @@
 #include <sstream>
 
 namespace llaisys {
-
 Tensor::Tensor(TensorMeta meta, core::storage_t storage, size_t offset)
     : _meta(std::move(meta)), _storage(std::move(storage)), _offset(offset) {}
-
 tensor_t Tensor::create(const std::vector<size_t> &shape,
                         llaisysDataType_t dtype,
                         llaisysDeviceType_t device_type,
@@ -34,28 +32,22 @@ tensor_t Tensor::create(const std::vector<size_t> &shape,
         auto storage = core::context().runtime().allocateDeviceStorage(total_elems * dtype_size);
         return std::shared_ptr<Tensor>(new Tensor(meta, storage));
     }
-}
-
+}    
 std::byte *Tensor::data() {
     return _storage->memory() + _offset;
 }
-
 const std::byte *Tensor::data() const {
     return _storage->memory() + _offset;
 }
-
 size_t Tensor::ndim() const {
     return _meta.shape.size();
 }
-
 const std::vector<size_t> &Tensor::shape() const {
     return _meta.shape;
 }
-
 const std::vector<ptrdiff_t> &Tensor::strides() const {
     return _meta.strides;
 }
-
 llaisysDataType_t Tensor::dtype() const {
     return _meta.dtype;
 }
@@ -63,19 +55,15 @@ llaisysDataType_t Tensor::dtype() const {
 llaisysDeviceType_t Tensor::deviceType() const {
     return _storage->deviceType();
 }
-
 int Tensor::deviceId() const {
     return _storage->deviceId();
 }
-
 size_t Tensor::numel() const {
     return std::accumulate(_meta.shape.begin(), _meta.shape.end(), size_t(1), std::multiplies<size_t>());
 }
-
 size_t Tensor::elementSize() const {
     return utils::dsize(_meta.dtype);
 }
-
 std::string Tensor::info() const {
     std::stringstream ss;
 
@@ -163,136 +151,123 @@ void Tensor::debug() const {
     }
 }
 
-bool Tensor::isContiguous() const {
-    // 空张量默认连续
-    if (_meta.shape.empty()) return true;
-    
-    // 从最后一维开始校验步长：连续张量的步长满足「当前维步长 = 下一维步长 * 下一维大小」
-    ptrdiff_t expected_stride = 1;
-    for (int i = _meta.shape.size() - 1; i >= 0; --i) {
-        if (_meta.strides[i] != expected_stride) {
-            return false;
+    bool Tensor::isContiguous() const {
+        const auto &sh = shape();
+        const auto &st = strides();
+            if (sh.empty()) return true;   
+        
+        size_t expect = 1;
+        for (size_t i = sh.size(); i-- > 0;) {
+            if (sh[i] == 1) continue;       // 长度为 1 的维可跳过
+            if((st[i] != static_cast<ptrdiff_t>(expect))){
+                return false;
+            }
+           expect*= sh[i];
         }
-        expected_stride *= _meta.shape[i];
-    }    
-    return true;
-}
-
+        return true;
+    }
 tensor_t Tensor::permute(const std::vector<size_t> &order) const {
-    // 验证输入的维度顺序是否有效
-    if (order.size() != _meta.shape.size()) {
-        throw std::invalid_argument("Permutation order size must match tensor dimension");
+  
+    if (order.size() != ndim()) {
+        throw std::invalid_argument("permute: order length mismatch");
     }
 
-    // 检查 order 是否包含所有维度索引，且无重复
-    std::vector<bool> seen(_meta.shape.size(), false);
-    for (size_t i = 0; i < order.size(); ++i) {
-        if (order[i] >= _meta.shape.size()) {
-            throw std::invalid_argument("Invalid dimension index in permutation order");
-        }
-        if (seen[order[i]]) {
-            throw std::invalid_argument("Duplicate dimension index in permutation order");
-        }
-        seen[order[i]] = true;
+    std::vector<size_t> new_shape(ndim());
+    std::vector<ptrdiff_t> new_strides(ndim());
+    for (size_t i = 0; i < ndim(); ++i) {
+        size_t j = order[i];
+        if (j >= ndim()) throw std::out_of_range("permute index");
+        new_shape[i]   = shape()[j];
+        new_strides[i] = strides()[j];
     }
 
-    // 构建新形状和新步长
-    std::vector<size_t> new_shape(order.size());
-    std::vector<ptrdiff_t> new_strides(order.size());
+    TensorMeta new_meta{dtype(), new_shape, new_strides};
+    return tensor_t(new Tensor(new_meta, _storage, _offset));   // 零拷贝
 
-    for (size_t i = 0; i < order.size(); ++i) {
-        new_shape[i] = _meta.shape[order[i]];
-        new_strides[i] = _meta.strides[order[i]];
-    }
 
-    // 创建新的元数据
-    TensorMeta new_meta{_meta.dtype, new_shape, new_strides};
-
-    // 创建并返回新的张量，使用相同的存储空间和偏移量
-    return std::shared_ptr<Tensor>(new Tensor(new_meta, _storage, _offset));
+    return std::shared_ptr<Tensor>(new Tensor(_meta, _storage));
 }
-
 tensor_t Tensor::view(const std::vector<size_t> &shape) const {
-    // 计算原始张量和新形状的元素总数
-    size_t original_numel = this->numel();
-    size_t new_numel = 1;
-    for (size_t dim : shape) {
-        new_numel *= dim;
+    if(isContiguous() == true){
+        tensor_t tmp = create(shape, this->dtype(), this->deviceType(), this->deviceId()); 
+        tmp->_storage = this->_storage;
+        return tmp;
+    }else{
+
+        return contiguous()->view(shape);
     }
-
-    // 检查元素总数是否匹配
-    if (original_numel != new_numel) {
-        throw std::runtime_error("New shape must have the same number of elements as the original tensor");
-    }
-
-    // 检查张量是否连续，只有连续的张量才能安全地改变视图
-    if (!this->isContiguous()) {
-        throw std::runtime_error("Cannot view non-contiguous tensor, call contiguous() first");
-    }
-
-    // 计算新的步长
-    std::vector<ptrdiff_t> new_strides(shape.size());
-    ptrdiff_t stride = 1;
-    for (int i = shape.size() - 1; i >= 0; --i) {
-        new_strides[i] = stride;
-        stride *= shape[i];
-    }
-
-    // 创建新的元数据
-    TensorMeta new_meta{_meta.dtype, shape, new_strides};
-
-    return std::shared_ptr<Tensor>(new Tensor(new_meta, _storage));
 }
 
 tensor_t Tensor::slice(size_t dim, size_t start, size_t end) const {
-    // 验证维度索引是否有效
-    if (dim >= _meta.shape.size()) {
-        throw std::invalid_argument("Dimension index out of range");
-    }
 
-    // 验证切片范围是否有效
-    if (start >= end || end > _meta.shape[dim]) {
-        throw std::invalid_argument("Invalid slice range");
-    }
+    if (dim >= ndim()) throw std::out_of_range("slice dim");
+    if (start > end || end > shape()[dim])
+        throw std::out_of_range("slice range");
 
-    // 计算新形状：将指定维度的大小更新为切片后的大小
-    std::vector<size_t> new_shape = _meta.shape;
-    new_shape[dim] = end - start;
+    auto new_shape   = shape();
+    auto new_strides = strides();
+    new_shape[dim]   = end - start;
 
-    // 计算新的偏移量：原偏移量加上切片起始位置的偏移
-    size_t new_offset = _offset + start * _meta.strides[dim] * utils::dsize(_meta.dtype);
+    size_t new_offset = _offset + start * new_strides[dim] * elementSize();
 
-    // 步长保持不变，因为切片不改变维度间的步长关系
-    std::vector<ptrdiff_t> new_strides = _meta.strides;
-
-    // 创建新的元数据
-    TensorMeta new_meta{_meta.dtype, new_shape, new_strides};
-
-    return std::shared_ptr<Tensor>(new Tensor(new_meta, _storage, new_offset));
+    TensorMeta new_meta{dtype(), new_shape, new_strides};
+    return tensor_t(new Tensor(new_meta, _storage, new_offset));
 }
 
 void Tensor::load(const void *src_) {
-    printf("Tensor::load()\n");
-    size_t total_bytes = this->numel() * this->elementSize();
-    
-    if (this->deviceType() == LLAISYS_DEVICE_CPU) {
-        // 如果目标是CPU设备，直接内存拷贝
-        std::memcpy(this->data(), src_, total_bytes);
+
+    size_t bytes = numel()*elementSize();
+    //拿到目标数据指针
+    std::byte *dst =data();
+
+    //拷贝
+    if (deviceType() == LLAISYS_DEVICE_CPU) {
+        std::memcpy(dst, src_, bytes);     // 纯内存复制
     } else {
-        // 如果目标是GPU或其他设备，需要从主机内存复制到设备内存
-        core::context().setDevice(this->deviceType(), this->deviceId());
+        core::context().setDevice(deviceType(), deviceId());
         core::context().runtime().api()->memcpy_sync(
-            this->data(),           // 目标地址（设备内存）
-            src_,                   // 源地址（主机内存）
-            total_bytes,            // 要复制的字节数
-            LLAISYS_MEMCPY_H2D      // 从主机到设备的内存复制
-        );
+            dst, src_, bytes,             // 目标，源，大小
+            LLAISYS_MEMCPY_H2D);          // 主机到设备
     }
 }
 
+
 tensor_t Tensor::contiguous() const {
-    TO_BE_IMPLEMENTED();
-    return std::shared_ptr<Tensor>(new Tensor(_meta, _storage));
+    if(isContiguous()){
+        return std::shared_ptr<Tensor>(new Tensor(_meta, _storage));
+    }else{
+       
+        const auto& sh  = shape();
+       
+        const auto  dim = sh.size();    
+
+        
+        std::vector<ptrdiff_t> c_str(dim, 1);
+        for (size_t i = dim - 1; i-- > 0;) {
+            c_str[i] = c_str[i + 1] * sh[i + 1];
+        }
+
+        
+        size_t bytes = numel() * elementSize();
+        core::storage_t st = (deviceType() == LLAISYS_DEVICE_CPU)
+                             ? core::context().runtime().allocateHostStorage(bytes)
+                             : core::context().runtime().allocateDeviceStorage(bytes);
+
+        
+        tensor_t dst(new Tensor(TensorMeta{dtype(), sh, c_str}, st, 0));
+
+       
+        core::context().setDevice(deviceType(), deviceId());
+        core::context().runtime().api()->memcpy_sync(
+        dst->data(), data(), bytes,
+        deviceType() == LLAISYS_DEVICE_CPU ? LLAISYS_MEMCPY_H2H : LLAISYS_MEMCPY_H2D);
+
+        return dst;         
+            
+    }
+
+
+    
 }
 
 tensor_t Tensor::reshape(const std::vector<size_t> &shape) const {

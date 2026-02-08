@@ -1,51 +1,145 @@
 #include "llaisys/models/qwen2.h"
 #include "models/qwen2.hpp"
+#include <algorithm>
 #include <cstring>
-#include <stdexcept>
-#include <string> 
-
+#include <iostream>
+#include <memory>
+#include <vector>
 using namespace llaisys::models;
+
+struct LlaisysQwen2Model {
+	LlaisysQwen2Meta meta{};
+	LlaisysQwen2Weights weights{};
+	llaisysDeviceType_t device = LLAISYS_DEVICE_CPU;
+	std::vector<int> device_ids;
+	std::unique_ptr<llaisys::models::Qwen2Model> impl;
+};
+
+static void init_layer_arrays(LlaisysQwen2Weights &w, size_t nlayer) {
+	w.attn_norm_w = new llaisysTensor_t[nlayer]();
+	w.attn_q_w = new llaisysTensor_t[nlayer]();
+	w.attn_q_b = new llaisysTensor_t[nlayer]();
+	w.attn_k_w = new llaisysTensor_t[nlayer]();
+	w.attn_k_b = new llaisysTensor_t[nlayer]();
+	w.attn_v_w = new llaisysTensor_t[nlayer]();
+	w.attn_v_b = new llaisysTensor_t[nlayer]();
+	w.attn_o_w = new llaisysTensor_t[nlayer]();
+	w.mlp_norm_w = new llaisysTensor_t[nlayer]();
+	w.mlp_gate_w = new llaisysTensor_t[nlayer]();
+	w.mlp_up_w = new llaisysTensor_t[nlayer]();
+	w.mlp_down_w = new llaisysTensor_t[nlayer]();
+}
+
+static void destroy_layer_arrays(LlaisysQwen2Weights &w, size_t nlayer) {
+	auto destroy_array = [nlayer](llaisysTensor_t *arr) {
+		if (!arr) return;
+		for (size_t i = 0; i < nlayer; ++i) {
+			if (arr[i]) {
+				tensorDestroy(arr[i]);
+				arr[i] = nullptr;
+			}
+		}
+		delete[] arr;
+	};
+
+	destroy_array(w.attn_norm_w);
+	destroy_array(w.attn_q_w);
+	destroy_array(w.attn_q_b);
+	destroy_array(w.attn_k_w);
+	destroy_array(w.attn_k_b);
+	destroy_array(w.attn_v_w);
+	destroy_array(w.attn_v_b);
+	destroy_array(w.attn_o_w);
+	destroy_array(w.mlp_norm_w);
+	destroy_array(w.mlp_gate_w);
+	destroy_array(w.mlp_up_w);
+	destroy_array(w.mlp_down_w);
+
+	w.attn_norm_w = nullptr;
+	w.attn_q_w = nullptr;
+	w.attn_q_b = nullptr;
+	w.attn_k_w = nullptr;
+	w.attn_k_b = nullptr;
+	w.attn_v_w = nullptr;
+	w.attn_v_b = nullptr;
+	w.attn_o_w = nullptr;
+	w.mlp_norm_w = nullptr;
+	w.mlp_gate_w = nullptr;
+	w.mlp_up_w = nullptr;
+	w.mlp_down_w = nullptr;
+}
+
 
 __C {
     // 模型创建
-    struct LlaisysQwen2Model *llaisysQwen2ModelCreate(
-        const LlaisysQwen2Meta *meta, 
-        llaisysDeviceType_t device, 
-        int *device_ids, 
-        int ndevice
-    ) {
-        try {
-            auto model = new Qwen2Model(meta, device, device_ids, ndevice);
-            return reinterpret_cast<LlaisysQwen2Model*>(model);
-        } catch (...) {
-            return nullptr;
-        }
-    }
+	__export struct LlaisysQwen2Model *llaisysQwen2ModelCreate(
+		const LlaisysQwen2Meta *meta,
+		llaisysDeviceType_t device,
+		int *device_ids,
+		int ndevice) {
+		if (!meta || ndevice <= 0) return nullptr;
 
-    // 模型销毁
-    void llaisysQwen2ModelDestroy(struct LlaisysQwen2Model * model) {
-        if (model) {
-            auto cpp_model = reinterpret_cast<Qwen2Model*>(model);
-            delete cpp_model;
-        }
-    }
+		auto *model = new LlaisysQwen2Model();
+		model->meta = *meta;
+		model->device = device;
+		model->device_ids.assign(device_ids, device_ids + ndevice);
+
+		init_layer_arrays(model->weights, model->meta.nlayer);
+		model->impl = std::make_unique<llaisys::models::Qwen2Model>(
+			model->meta,
+			model->weights,
+			model->device,
+			model->device_ids);
+
+		return model;
+	}
+
+    //销毁千问2模型实例
+	__export void llaisysQwen2ModelDestroy(struct LlaisysQwen2Model *model) {
+		if (!model) return;
+
+		if (model->weights.in_embed) {
+			tensorDestroy(model->weights.in_embed);
+			model->weights.in_embed = nullptr;
+		}
+		if (model->weights.out_embed) {
+			tensorDestroy(model->weights.out_embed);
+			model->weights.out_embed = nullptr;
+		}
+		if (model->weights.out_norm_w) {
+			tensorDestroy(model->weights.out_norm_w);
+			model->weights.out_norm_w = nullptr;
+		}
+
+		destroy_layer_arrays(model->weights, model->meta.nlayer);
+
+		model->impl.reset();
+		delete model;
+	}
+
 
     // 获取权重结构体
-    struct LlaisysQwen2Weights *llaisysQwen2ModelWeights(struct LlaisysQwen2Model * model) {
-        if (!model) return nullptr;
-        auto cpp_model = reinterpret_cast<Qwen2Model*>(model);
-        return cpp_model->weights();
-    }
+	__export struct LlaisysQwen2Weights *llaisysQwen2ModelWeights(struct LlaisysQwen2Model *model) {
+		if (!model) return nullptr;
+		return &model->weights;
+	}
 
     // 推理
-    int64_t llaisysQwen2ModelInfer(struct LlaisysQwen2Model * model, int64_t * token_ids, size_t ntoken) {
-        if (!model || !token_ids || ntoken == 0) return -1;
-        auto cpp_model = reinterpret_cast<Qwen2Model*>(model);
-        return cpp_model->infer(token_ids, ntoken);
+	__export int64_t llaisysQwen2ModelInfer(struct LlaisysQwen2Model *model, int64_t *token_ids, size_t ntoken) {
+		if (!model || !model->impl) return -1;
+		try {
+			return model->impl->infer(token_ids, ntoken);
+		} catch (const std::exception &e) {
+			std::cerr << "[ERROR] Qwen2 infer failed: " << e.what() << std::endl;
+			return -1;
+		} catch (...) {
+			std::cerr << "[ERROR] Qwen2 infer failed: unknown exception" << std::endl;
+			return -1;
+		}
     }
 
     // 修改推理函数，增加采样参数
-    int64_t llaisysQwen2ModelInferWithSampling(
+    __export int64_t llaisysQwen2ModelInferWithSampling(
         struct LlaisysQwen2Model * model, 
         int64_t * token_ids, 
         size_t ntoken,
@@ -53,82 +147,20 @@ __C {
         float top_p,
         float temperature
     ) {
-        if (!model || !token_ids || ntoken == 0) return -1;
-        auto cpp_model = reinterpret_cast<Qwen2Model*>(model);
-        return cpp_model->infer_with_sampling(token_ids, ntoken, top_k, top_p, temperature);
+        if (!model || !model->impl) return -1;
+        return model->impl->infer_with_sampling(token_ids, ntoken, top_k, top_p, temperature);
     }
 
     
-
-    // 权重加载（根据tensor_name匹配权重字段）
-    void llaisysQwen2WeightsLoadTensor(
-        struct LlaisysQwen2Weights *weights,
-        const char *tensor_name,
-        llaisysTensor_t tensor
-    ) {
-        if (!weights || !tensor_name || !tensor) return;
-        
-        // 解析tensor_name并匹配到对应的权重字段
-        std::string name(tensor_name);
-        
-        if (name == "model.embed_tokens.weight") {
-            weights->in_embed = tensor;
-        } else if (name == "lm_head.weight") {
-            weights->out_embed = tensor;
-        } else if (name == "model.norm.weight") {
-            weights->out_norm_w = tensor;
-        } else {
-            // 处理层特定权重，例如：model.layers.0.self_attn.q_proj.weight
-            if (name.find("model.layers.") != std::string::npos) {
-                // 解析层索引
-                size_t layer_pos = name.find("layers.");
-                size_t layer_start = layer_pos + 7; // "layers." length
-                size_t layer_end = name.find(".", layer_start);
-                if (layer_end != std::string::npos) {
-                    int layer_idx = std::stoi(name.substr(layer_start, layer_end - layer_start));
-                    
-                    // 根据权重名称匹配到对应字段
-                    if (name.find(".input_layernorm.weight") != std::string::npos) {
-                        weights->attn_norm_w[layer_idx] = tensor;
-                    } else if (name.find(".self_attn.q_proj.weight") != std::string::npos) {
-                        weights->attn_q_w[layer_idx] = tensor;
-                    } else if (name.find(".self_attn.q_proj.bias") != std::string::npos) {
-                        weights->attn_q_b[layer_idx] = tensor;
-                    } else if (name.find(".self_attn.k_proj.weight") != std::string::npos) {
-                        weights->attn_k_w[layer_idx] = tensor;
-                    } else if (name.find(".self_attn.k_proj.bias") != std::string::npos) {
-                        weights->attn_k_b[layer_idx] = tensor;
-                    } else if (name.find(".self_attn.v_proj.weight") != std::string::npos) {
-                        weights->attn_v_w[layer_idx] = tensor;
-                    } else if (name.find(".self_attn.v_proj.bias") != std::string::npos) {
-                        weights->attn_v_b[layer_idx] = tensor;
-                    } else if (name.find(".self_attn.o_proj.weight") != std::string::npos) {
-                        weights->attn_o_w[layer_idx] = tensor;
-                    } else if (name.find(".post_attention_layernorm.weight") != std::string::npos) {
-                        weights->mlp_norm_w[layer_idx] = tensor;
-                    } else if (name.find(".mlp.gate_proj.weight") != std::string::npos) {
-                        weights->mlp_gate_w[layer_idx] = tensor;
-                    } else if (name.find(".mlp.up_proj.weight") != std::string::npos) {
-                        weights->mlp_up_w[layer_idx] = tensor;
-                    } else if (name.find(".mlp.down_proj.weight") != std::string::npos) {
-                        weights->mlp_down_w[layer_idx] = tensor;
-                    }
-                }
-            }
-        }
-    }
-
     // 初始化KV-Cache
-    void llaisysQwen2ModelInitKVCache(struct LlaisysQwen2Model *model) {
-        if (!model) return;
-        auto cpp_model = reinterpret_cast<Qwen2Model*>(model);
-        cpp_model->init_kv_cache();
+    __export void llaisysQwen2ModelInitKVCache(struct LlaisysQwen2Model *model) {
+        if (!model || !model->impl) return ;
+        model->impl->init_kv_cache();
     }
 
     // 释放KV-Cache
-    void llaisysQwen2ModelFreeKVCache(struct LlaisysQwen2Model *model) {
-        if (!model) return;
-        auto cpp_model = reinterpret_cast<Qwen2Model*>(model);
-        cpp_model->free_kv_cache();
+    __export void llaisysQwen2ModelFreeKVCache(struct LlaisysQwen2Model *model) {
+        if (!model || !model->impl) return;
+        model->impl->free_kv_cache();
     }
 }

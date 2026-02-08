@@ -10,52 +10,21 @@
 namespace llaisys {
 namespace models {
 
-Qwen2Model::Qwen2Model(const LlaisysQwen2Meta* meta, llaisysDeviceType_t device, int* device_ids, int ndevice) {
-    // 1. 拷贝元信息
-    memcpy(&_meta, meta, sizeof(LlaisysQwen2Meta));
-    // 2. 设备信息
-    _device = device;
-    _device_ids.resize(ndevice);
-    memcpy(_device_ids.data(), device_ids, ndevice * sizeof(int));
-    // 3. 初始化权重数组（按nlayer分配）
-    size_t nlayer = meta->nlayer;
-    _weights.attn_norm_w = new llaisysTensor_t[nlayer];
-    _weights.attn_q_w = new llaisysTensor_t[nlayer];
-    _weights.attn_q_b = new llaisysTensor_t[nlayer];
-    _weights.attn_k_w = new llaisysTensor_t[nlayer];
-    _weights.attn_k_b = new llaisysTensor_t[nlayer];
-    _weights.attn_v_w = new llaisysTensor_t[nlayer];
-    _weights.attn_v_b = new llaisysTensor_t[nlayer];
-    _weights.attn_o_w = new llaisysTensor_t[nlayer];
-    _weights.mlp_norm_w = new llaisysTensor_t[nlayer];
-    _weights.mlp_gate_w = new llaisysTensor_t[nlayer];
-    _weights.mlp_up_w = new llaisysTensor_t[nlayer];
-    _weights.mlp_down_w = new llaisysTensor_t[nlayer];
-    // 4. 初始化KV-Cache
-    _kv_caches.resize(nlayer);
-}
+Qwen2Model::Qwen2Model(const LlaisysQwen2Meta &meta,
+             const LlaisysQwen2Weights &weights,
+             llaisysDeviceType_t device,
+             const std::vector<int> &device_ids)
+    : _meta(meta),
+      _weights(&weights),
+      _device(device),
+      _device_ids(device_ids){
+        init_kv_cache();
+      }
 
 Qwen2Model::~Qwen2Model() {
-    // 释放权重数组
-    delete[] _weights.attn_norm_w;
-    delete[] _weights.attn_q_w;
-    delete[] _weights.attn_q_b;
-    delete[] _weights.attn_k_w;
-    delete[] _weights.attn_k_b;
-    delete[] _weights.attn_v_w;
-    delete[] _weights.attn_v_b;
-    delete[] _weights.attn_o_w;
-    delete[] _weights.mlp_norm_w;
-    delete[] _weights.mlp_gate_w;
-    delete[] _weights.mlp_up_w;
-    delete[] _weights.mlp_down_w;
-    // 释放KV-Cache
     free_kv_cache();
 }
 
-LlaisysQwen2Weights* Qwen2Model::weights() {
-    return &_weights;
-}
 
 
 void Qwen2Model::init_kv_cache() {
@@ -85,7 +54,7 @@ int64_t Qwen2Model::infer(int64_t* token_ids, size_t ntoken) {
     // 2. 遍历所有层
     for (size_t i = 0; i < _meta.nlayer; ++i) {
         // 2.1 RMSNorm（attention输入）
-        llaisysTensor_t x_norm = forward_rms_norm(x, _weights.attn_norm_w[i], _meta.epsilon);
+        llaisysTensor_t x_norm = forward_rms_norm(x, _weights->attn_norm_w[i], _meta.epsilon);
         // 2.2 SelfAttention（带KV-Cache）
         llaisysTensor_t attn_out = forward_attention(x_norm, i, ntoken);
         // 2.3 残差连接
@@ -107,7 +76,7 @@ int64_t Qwen2Model::infer(int64_t* token_ids, size_t ntoken) {
         tensorDestroy(attn_out);
         
         // 2.4 RMSNorm（MLP输入）
-        llaisysTensor_t x_mlp_norm = forward_rms_norm(x, _weights.mlp_norm_w[i], _meta.epsilon);
+        llaisysTensor_t x_mlp_norm = forward_rms_norm(x, _weights->mlp_norm_w[i], _meta.epsilon);
         // 2.5 MLP（SwiGLU）
         llaisysTensor_t mlp_out = forward_mlp(x_mlp_norm, i);
         // 2.6 残差连接
@@ -129,7 +98,7 @@ int64_t Qwen2Model::infer(int64_t* token_ids, size_t ntoken) {
         tensorDestroy(mlp_out);
     }
     // 3. 最后的RMSNorm
-    llaisysTensor_t x_final = forward_rms_norm(x, _weights.out_norm_w, _meta.epsilon);
+    llaisysTensor_t x_final = forward_rms_norm(x, _weights->out_norm_w, _meta.epsilon);
     // 4. 输出Embedding（linear层）
     // 获取x_final的形状信息用于创建logits张量
     size_t x_final_ndim = tensorGetNdim(x_final);
@@ -144,7 +113,7 @@ int64_t Qwen2Model::infer(int64_t* token_ids, size_t ntoken) {
     llaisysTensor_t logits = tensorCreate(x_final_shape, x_final_ndim, x_final_dtype, x_final_device_type, x_final_device_id);
     delete[] x_final_shape;
     
-    llaisysLinear(logits, x_final, _weights.out_embed, nullptr);  
+    llaisysLinear(logits, x_final, _weights->out_embed, nullptr);  
     
     // 5. ArgMax取最大概率token
     // 为ArgMax创建输出张量
@@ -172,7 +141,7 @@ int64_t Qwen2Model::infer_with_sampling(int64_t* token_ids, size_t ntoken, int t
     // 2. 遍历所有层
     for (size_t i = 0; i < _meta.nlayer; ++i) {
         // 2.1 RMSNorm（attention输入）
-        llaisysTensor_t x_norm = forward_rms_norm(x, _weights.attn_norm_w[i], _meta.epsilon);
+        llaisysTensor_t x_norm = forward_rms_norm(x, _weights->attn_norm_w[i], _meta.epsilon);
         // 2.2 SelfAttention（带KV-Cache）
         llaisysTensor_t attn_out = forward_attention(x_norm, i, ntoken);
         // 2.3 残差连接
@@ -194,7 +163,7 @@ int64_t Qwen2Model::infer_with_sampling(int64_t* token_ids, size_t ntoken, int t
         tensorDestroy(attn_out);
         
         // 2.4 RMSNorm（MLP输入）
-        llaisysTensor_t x_mlp_norm = forward_rms_norm(x, _weights.mlp_norm_w[i], _meta.epsilon);
+        llaisysTensor_t x_mlp_norm = forward_rms_norm(x, _weights->mlp_norm_w[i], _meta.epsilon);
         // 2.5 MLP（SwiGLU）
         llaisysTensor_t mlp_out = forward_mlp(x_mlp_norm, i);
         // 2.6 残差连接
@@ -216,7 +185,7 @@ int64_t Qwen2Model::infer_with_sampling(int64_t* token_ids, size_t ntoken, int t
         tensorDestroy(mlp_out);
     }
     // 3. 最后的RMSNorm
-    llaisysTensor_t x_final = forward_rms_norm(x, _weights.out_norm_w, _meta.epsilon);
+    llaisysTensor_t x_final = forward_rms_norm(x, _weights->out_norm_w, _meta.epsilon);
     // 4. 输出Embedding（linear层）
     // 获取x_final的形状信息用于创建logits张量
     size_t x_final_ndim = tensorGetNdim(x_final);
@@ -231,7 +200,7 @@ int64_t Qwen2Model::infer_with_sampling(int64_t* token_ids, size_t ntoken, int t
     llaisysTensor_t logits = tensorCreate(x_final_shape, x_final_ndim, x_final_dtype, x_final_device_type, x_final_device_id);
     delete[] x_final_shape;
     
-    llaisysLinear(logits, x_final, _weights.out_embed, nullptr);  
+    llaisysLinear(logits, x_final, _weights->out_embed, nullptr);  
 
     // 5. 应用温度缩放
     if (temperature != 1.0f) {
@@ -353,7 +322,7 @@ llaisysTensor_t Qwen2Model::forward_embedding(int64_t* token_ids, size_t ntoken)
 
     size_t embedding_shape[2] = {ntoken, _meta.hs};
     llaisysTensor_t out = tensorCreate(embedding_shape, 2, _meta.dtype, _device, _device_ids[0]);
-    llaisysEmbedding(out, index_tensor, _weights.in_embed);
+    llaisysEmbedding(out, index_tensor, _weights->in_embed);
     tensorDestroy(index_tensor);
     return out;
 }
@@ -361,11 +330,11 @@ llaisysTensor_t Qwen2Model::forward_embedding(int64_t* token_ids, size_t ntoken)
 
 llaisysTensor_t Qwen2Model::forward_attention(const llaisysTensor_t& x, size_t layer_idx, size_t seq_len) {
     // 获取当前层的权重参数
-    llaisysTensor_t wq = _weights.attn_q_w[layer_idx];
-    llaisysTensor_t wk = _weights.attn_k_w[layer_idx];
-    llaisysTensor_t wv = _weights.attn_v_w[layer_idx];
-    llaisysTensor_t wo = _weights.attn_o_w[layer_idx];
-    
+    llaisysTensor_t wq = _weights->attn_q_w[layer_idx];
+    llaisysTensor_t wk = _weights->attn_k_w[layer_idx];
+    llaisysTensor_t wv = _weights->attn_v_w[layer_idx];
+    llaisysTensor_t wo = _weights->attn_o_w[layer_idx];
+
     // 获取x的形状信息
     size_t x_ndim = tensorGetNdim(x);
     size_t* x_shape = new size_t[x_ndim];
@@ -385,10 +354,10 @@ llaisysTensor_t Qwen2Model::forward_attention(const llaisysTensor_t& x, size_t l
     llaisysTensor_t v = tensorCreate(v_shape, 3, x_dtype, x_device_type, x_device_id);
     
     // 计算Q、K、V
-    llaisysLinear(q, x, wq, _weights.attn_q_b[layer_idx]);
-    llaisysLinear(k, x, wk, _weights.attn_k_b[layer_idx]);
-    llaisysLinear(v, x, wv, _weights.attn_v_b[layer_idx]);
-    
+    llaisysLinear(q, x, wq, _weights->attn_q_b[layer_idx]);
+    llaisysLinear(k, x, wk, _weights->attn_k_b[layer_idx]);
+    llaisysLinear(v, x, wv, _weights->attn_v_b[layer_idx]);
+
     // 获取KV Cache
     auto& cache = _kv_caches[layer_idx];
     size_t cur_len = cache.cur_len;
@@ -459,9 +428,9 @@ llaisysTensor_t Qwen2Model::forward_attention(const llaisysTensor_t& x, size_t l
 }
 llaisysTensor_t Qwen2Model::forward_mlp(const llaisysTensor_t& x, size_t layer_idx) {
     // 获取当前层的MLP权重参数
-    llaisysTensor_t gate_w = _weights.mlp_gate_w[layer_idx];
-    llaisysTensor_t up_w = _weights.mlp_up_w[layer_idx];
-    llaisysTensor_t down_w = _weights.mlp_down_w[layer_idx];
+    llaisysTensor_t gate_w = _weights->mlp_gate_w[layer_idx];
+    llaisysTensor_t up_w = _weights->mlp_up_w[layer_idx];
+    llaisysTensor_t down_w = _weights->mlp_down_w[layer_idx];
     
     // 获取x的形状信息
     size_t x_ndim = tensorGetNdim(x);
